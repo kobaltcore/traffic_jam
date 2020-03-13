@@ -85,7 +85,7 @@ class Clock:
         self.next += 60.0 / self.bpm / 24
         if now > self.next:
             if self.started:
-                print("We're running late by {} seconds!".format(self.next - now))
+                print("We're running late by {:.2f} seconds!".format(self.next - now))
             # If we are late, should we try to stay aligned, or skip?
             margin = 0.0  # Put 1.0 for pseudo-realtime
             if now > self.next + margin:
@@ -313,11 +313,20 @@ class MaschineJam(Tickable):
         self.special_buttons = {i: CCButton(device_port=self.port_out, relay_port=self.relay_port, note=i)
                                 for i in range(16)}
 
+        # Play button
         def adjust_clock(state):
             if state == ButtonState.ACTIVE:
                 print("toggled clock")
                 CLOCK.toggle_lock()
         self.special_buttons[8].callback = adjust_clock
+
+        # Record button
+        def adjust_clock(state):
+            if state == ButtonState.ACTIVE:
+                print("reset clock")
+                CLOCK.lock()
+                CLOCK.tick_no = 0
+        self.special_buttons[9].callback = adjust_clock
 
     def process_message(self, message):
         if message.type == "note_on":
