@@ -1,0 +1,25 @@
+colors:
+  black: 0
+  red: 4
+  orange: 8
+  light_orange: 12
+  warm_yellow: 16
+  yellow: 20
+  lime: 24
+  green: 28
+  mint: 32
+  cyan: 36
+  turquoise: 40
+  blue: 44
+  plum: 48
+  violet: 52
+  purple: 56
+  magenta: 60
+  fuchsia: 64
+  white: 68
+
+states:
+  dim: 0
+  dim_flash: 1
+  bright: 2
+  flash: 3
