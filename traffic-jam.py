@@ -156,6 +156,11 @@ class TouchStrip(Tickable):
         self.prev_state = 0
         self.needs_tick = True
 
+    def reset(self):
+        self.state = 0
+        self.pev_state = 0
+        self.needs_tick = True
+
     def tick(self, tick_no):
         if not self.needs_tick and self.prev_state == self.state:
             return
@@ -190,6 +195,14 @@ class CCButton(Tickable):
         self.note_action = note_action
         self.callback = callback
 
+    def reset(self):
+        self.state = ButtonState.INACTIVE
+        self.prev_state = None
+        self.needs_tick = True
+        self.led_state["inactive"] = LedState("black", "dim")
+        self.led_state["active"] = LedState("black", "bright")
+        self.note_action = None
+
     def tick(self, tick_no):
         # If the state has not change, there is no need to update
         if not self.needs_tick and self.prev_state == self.state:
@@ -218,6 +231,8 @@ class CCButton(Tickable):
                 elif isinstance(self.note_action, list) or isinstance(self.note_action, tuple):
                     for note in self.note_action:
                         self.relay_port.send(mido.Message("control_change", control=note, value=127))
+            else:
+                self.relay_port.send(mido.Message("control_change", control=self.note, value=127))
 
         self.needs_tick = False
         self.prev_state = self.state
@@ -241,11 +256,19 @@ class Button(Tickable):
         self.note = note
         self.state = ButtonState.INACTIVE
         self.prev_state = None
-        self.needs_tick = True  # indicates that properties have changed, requiring a redraw
+        self.needs_tick = True
         self.led_state = {}
         self.led_state["inactive"] = led_state_inactive or LedState("black", "dim")
         self.led_state["active"] = led_state_active or LedState("black", "bright")
         self.note_action = note_action
+
+    def reset(self):
+        self.state = ButtonState.INACTIVE
+        self.prev_state = None
+        self.needs_tick = True
+        self.led_state["inactive"] = LedState("black", "dim")
+        self.led_state["active"] = LedState("black", "bright")
+        self.note_action = None
 
     def tick(self, tick_no):
         # If the state has not change, there is no need to update
@@ -261,8 +284,6 @@ class Button(Tickable):
                 elif isinstance(self.note_action, list) or isinstance(self.note_action, tuple):
                     for note in self.note_action:
                         self.relay_port.send(mido.Message("note_on", note=note, velocity=0))
-            else:
-                self.relay_port.send(mido.Message("note_on", note=self.note, velocity=0))
         if self.state == ButtonState.ACTIVE:
             self.device_port.send(mido.Message("note_on", note=self.note,
                                                velocity=self.led_state["active"].color_value()))
@@ -295,6 +316,8 @@ class MaschineJam(Tickable):
         self.port_in.callback = self.process_message
         self.timeline = None
         self.data_cache = None
+        self.prev_tick = None
+        self.grid = None
         self.reset_grid()
 
     def shutdown(self):
@@ -316,8 +339,8 @@ class MaschineJam(Tickable):
         # Play button
         def adjust_clock(state):
             if state == ButtonState.ACTIVE:
-                print("toggled clock")
                 CLOCK.toggle_lock()
+                print("{} clock".format("stopped" if CLOCK.locked else "started"))
         self.special_buttons[8].callback = adjust_clock
 
         # Record button
@@ -343,11 +366,18 @@ class MaschineJam(Tickable):
                 print("unhandled message", message)
 
     def tick(self, tick_no):
-        if self.timeline:
+        if self.timeline and not self.prev_tick == tick_no:
+            self.prev_tick = tick_no
             data = self.timeline.get(tick_no)
             if data:
                 if self.data_cache and not self.data_cache == data:
-                    self.reset_grid()
+                    # Reset buttons from the previous time slice
+                    for note in self.data_cache.keys():
+                        if isinstance(note, int):
+                            self.grid[note].reset()
+                        elif note.startswith("cc"):
+                            cc_note = int(note.lstrip("cc"))
+                            self.grid[cc_note].reset()
 
                 self.data_cache = data
 
@@ -358,11 +388,12 @@ class MaschineJam(Tickable):
                         self.grid[note].note_action = spec["note_action"]
                         self.grid[note].needs_tick = True
                     elif note.startswith("cc"):
-                        self.special_buttons[int(note.lstrip("cc"))].led_state["active"] = spec["led_state"]["active"]
-                        self.special_buttons[int(note.lstrip("cc"))].led_state[
+                        cc_note = int(note.lstrip("cc"))
+                        self.special_buttons[cc_note].led_state["active"] = spec["led_state"]["active"]
+                        self.special_buttons[cc_note].led_state[
                             "inactive"] = spec["led_state"]["inactive"]
-                        self.special_buttons[int(note.lstrip("cc"))].note_action = spec["note_action"]
-                        self.special_buttons[int(note.lstrip("cc"))].needs_tick = True
+                        self.special_buttons[cc_note].note_action = spec["note_action"]
+                        self.special_buttons[cc_note].needs_tick = True
 
         for button in self.grid.values():
             button.tick(tick_no)

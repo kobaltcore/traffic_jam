@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <ni-controller-midi-map version="1">
-  <midi-map type="MaschineJam" name="Template 1" port="internal">
+  <midi-map type="MaschineJam" name="Traffic JAM" port="internal">
     <disableMatrixButtonPages />
     <disableIOLevelPages />
     <handleTransport>0</handleTransport>
@@ -23,12 +23,18 @@
         <reaction>ondown</reaction>
       </button>
       <button version="1" id="BtnArrowLeft">
-        <mcu-button>91</mcu-button>
+        <controller>10</controller>
+        <channel>0</channel>
+        <off>0</off>
+        <on>127</on>
         <behavior>gate</behavior>
         <reaction>ondown</reaction>
       </button>
       <button version="1" id="BtnArrowRight">
-        <mcu-button>92</mcu-button>
+        <controller>11</controller>
+        <channel>0</channel>
+        <off>0</off>
+        <on>127</on>
         <behavior>gate</behavior>
         <reaction>ondown</reaction>
       </button>
@@ -121,8 +127,10 @@
         <reaction>ondown</reaction>
       </button>
       <button version="1" id="BtnGrid">
-        <disabled />
-        <mcu-button>73</mcu-button>
+        <controller>13</controller>
+        <channel>0</channel>
+        <off>0</off>
+        <on>127</on>
         <behavior>gate</behavior>
         <reaction>ondown</reaction>
       </button>
@@ -319,8 +327,10 @@
         <reaction>ondown</reaction>
       </button>
       <button version="1" id="BtnMute">
-        <disabled />
-        <mcu-button>24</mcu-button>
+        <controller>15</controller>
+        <channel>0</channel>
+        <off>0</off>
+        <on>127</on>
         <behavior>gate</behavior>
         <reaction>ondown</reaction>
       </button>
@@ -341,12 +351,18 @@
         <reaction>ondown</reaction>
       </button>
       <button version="1" id="BtnPlay">
-        <mcu-button>94</mcu-button>
+        <controller>8</controller>
+        <channel>0</channel>
+        <off>0</off>
+        <on>127</on>
         <behavior>gate</behavior>
         <reaction>ondown</reaction>
       </button>
       <button version="1" id="BtnRecord">
-        <mcu-button>95</mcu-button>
+        <controller>9</controller>
+        <channel>0</channel>
+        <off>0</off>
+        <on>127</on>
         <behavior>gate</behavior>
         <reaction>ondown</reaction>
       </button>
@@ -504,8 +520,10 @@
         <reaction>ondown</reaction>
       </button>
       <button version="1" id="BtnSolo">
-        <disabled />
-        <mcu-button>16</mcu-button>
+        <controller>14</controller>
+        <channel>0</channel>
+        <off>0</off>
+        <on>127</on>
         <behavior>gate</behavior>
         <reaction>ondown</reaction>
       </button>
@@ -526,7 +544,10 @@
         <reaction>ondown</reaction>
       </button>
       <button version="1" id="BtnTempo">
-        <mcu-button>93</mcu-button>
+        <controller>12</controller>
+        <channel>0</channel>
+        <off>0</off>
+        <on>127</on>
         <behavior>gate</behavior>
         <reaction>ondown</reaction>
       </button>
