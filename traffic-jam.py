@@ -21,7 +21,7 @@ def defaultdict_rec():
 
 class Clock:
 
-    def __init__(self, bpm=120, ppq=24):
+    def __init__(self, bpm=120, ppq=24, locked=False):
         self.bpm = bpm
         self.ppq = ppq
         self.started = False
@@ -31,6 +31,7 @@ class Clock:
         self.registered_objects = []
         self.registered_cues = []
         self.cpu = CPU()
+        self.locked = locked
 
     def seconds_to_ticks(self, seconds):
         return seconds / self.tick_length
@@ -62,6 +63,15 @@ class Clock:
 
         self.cpu.tick(self.tick_no)
 
+    def lock(self):
+        self.locked = True
+
+    def unlock(self):
+        self.locked = False
+
+    def toggle_lock(self):
+        self.locked = not self.locked
+
     # Return how long it is until the next tick.
     # (Or zero if the next tick is due now, or overdue.)
     def poll(self):
@@ -69,7 +79,8 @@ class Clock:
         if now < self.next:
             return self.next - now
         self.tick()
-        self.tick_no += 1
+        if not self.locked:
+            self.tick_no += 1
         # Compute when we're due next
         self.next += 60.0 / self.bpm / 24
         if now > self.next:
@@ -166,7 +177,7 @@ class CCButton(Tickable):
 
     def __init__(self, device_port, relay_port, note,
                  led_state_inactive=None, led_state_active=None,
-                 note_action=None):
+                 note_action=None, callback=None):
         self.device_port = device_port
         self.relay_port = relay_port
         self.note = note
@@ -177,11 +188,15 @@ class CCButton(Tickable):
         self.led_state["inactive"] = led_state_inactive or LedState("black", "dim")
         self.led_state["active"] = led_state_active or LedState("black", "bright")
         self.note_action = note_action
+        self.callback = callback
 
     def tick(self, tick_no):
         # If the state has not change, there is no need to update
         if not self.needs_tick and self.prev_state == self.state:
             return
+
+        if self.callback:
+            self.callback(self.state)
 
         if self.state == ButtonState.INACTIVE:
             self.device_port.send(mido.Message("control_change", control=self.note,
@@ -279,7 +294,13 @@ class MaschineJam(Tickable):
         self.relay_port = mido.open_output(port_name_relay, virtual=True)
         self.port_in.callback = self.process_message
         self.timeline = None
+        self.data_cache = None
         self.reset_grid()
+
+    def shutdown(self):
+        self.port_out.close()
+        self.port_in.close()
+        self.relay_port.close()
 
     def activate_timeline(self, timeline):
         self.timeline = timeline
@@ -290,22 +311,37 @@ class MaschineJam(Tickable):
         self.touch_strips = {i + 48: TouchStrip(device_port=self.port_out, relay_port=self.relay_port, note=48 + i)
                              for i in range(8)}
         self.special_buttons = {i: CCButton(device_port=self.port_out, relay_port=self.relay_port, note=i)
-                                for i in range(8)}
+                                for i in range(16)}
+
+        def adjust_clock(state):
+            if state == ButtonState.ACTIVE:
+                print("toggled clock")
+                CLOCK.toggle_lock()
+        self.special_buttons[8].callback = adjust_clock
 
     def process_message(self, message):
         if message.type == "note_on":
             if 0 <= message.note <= 64:
                 self.grid[message.note].update(message)
+            else:
+                print("unhandled message", message)
         elif message.type == "control_change":
-            if 0 <= message.control <= 7:
+            if 0 <= message.control <= 16:
                 self.special_buttons[message.control].update(message)
             elif 48 <= message.control <= 111:
                 self.touch_strips[message.control].update(message)
+            else:
+                print("unhandled message", message)
 
     def tick(self, tick_no):
         if self.timeline:
             data = self.timeline.get(tick_no)
             if data:
+                if self.data_cache and not self.data_cache == data:
+                    self.reset_grid()
+
+                self.data_cache = data
+
                 for note, spec in data.items():
                     if isinstance(note, int):
                         self.grid[note].led_state["active"] = spec["led_state"]["active"]
@@ -313,7 +349,6 @@ class MaschineJam(Tickable):
                         self.grid[note].note_action = spec["note_action"]
                         self.grid[note].needs_tick = True
                     elif note.startswith("cc"):
-                        print(note)
                         self.special_buttons[int(note.lstrip("cc"))].led_state["active"] = spec["led_state"]["active"]
                         self.special_buttons[int(note.lstrip("cc"))].led_state[
                             "inactive"] = spec["led_state"]["inactive"]
@@ -362,9 +397,7 @@ class NoteDB:
 
 class Timeline:
 
-    def __init__(self, filename, clock):
-        self.clock = clock
-
+    def __init__(self, filename):
         with open(filename, "r") as f:
             timeline_data = yaml.full_load(f)
 
@@ -375,7 +408,7 @@ class Timeline:
                 tick_index = int(index)
             except:
                 # otherwise treat as natural language duration
-                tick_index = self.clock.seconds_to_ticks(Duration(index).to_seconds())
+                tick_index = CLOCK.seconds_to_ticks(Duration(index).to_seconds())
             self.data[tick_index] = defaultdict_rec()
 
             for note, note_spec in time_spec.items():
@@ -456,9 +489,9 @@ class Palette:
 
 
 def main(args):
-    global NOTE_DB, PALETTE
+    global CLOCK, NOTE_DB, PALETTE
 
-    clock = Clock(bpm=args.bpm, ppq=args.ppq)
+    CLOCK = Clock(bpm=args.bpm, ppq=args.ppq, locked=True)
 
     NOTE_DB = NoteDB(args.notes_file)
 
@@ -466,7 +499,7 @@ def main(args):
 
     timeline = None
     if args.timeline_file:
-        timeline = Timeline(args.timeline_file, clock)
+        timeline = Timeline(args.timeline_file)
     else:
         print(colored("Warning:", "yellow"), "No timeline file specified, no responses will be generated")
 
@@ -482,15 +515,16 @@ def main(args):
     if timeline:
         jam.activate_timeline(timeline)
 
-    clock.register(jam)
+    CLOCK.register(jam)
 
     try:
         while True:
-            clock.once()
+            CLOCK.once()
     except KeyboardInterrupt:
         print("\nAborted")
         jam.reset_grid()
-        clock.tick()
+        CLOCK.tick()
+        jam.shutdown()
 
 
 if __name__ == '__main__':
