@@ -68,8 +68,8 @@ class Clock:
         now = time.time()
         if now < self.next:
             return self.next - now
-        self.tick_no += 1
         self.tick()
+        self.tick_no += 1
         # Compute when we're due next
         self.next += 60.0 / self.bpm / 24
         if now > self.next:
@@ -141,35 +141,79 @@ class TouchStrip(Tickable):
         self.device_port = device_port
         self.relay_port = relay_port
         self.note = note
+        self.state = 0
+        self.prev_state = 0
+        self.needs_tick = True
 
     def tick(self, tick_no):
-        pass
+        if not self.needs_tick and self.prev_state == self.state:
+            return
+
+        self.device_port.send(mido.Message("control_change", control=self.note,
+                                           value=self.state))
+        self.relay_port.send(mido.Message("control_change", control=self.note,
+                                          value=self.state))
+
+        self.needs_tick = False
+        self.prev_state = self.state
 
     def update(self, message):
-        self.relay_port.send(mido.Message("control_change", control=self.note, value=message.value))
-        # if message.velocity == 0:
-        #     self.state = ButtonState.INACTIVE
-        # elif message.velocity == 127:
-        #     self.state = ButtonState.ACTIVE
+        self.needs_tick = True
+        self.state = message.value
 
 
 class CCButton(Tickable):
 
-    def __init__(self, device_port, relay_port, note):
+    def __init__(self, device_port, relay_port, note,
+                 led_state_inactive=None, led_state_active=None,
+                 note_action=None):
         self.device_port = device_port
         self.relay_port = relay_port
         self.note = note
-        self.prev_state = None
         self.state = ButtonState.INACTIVE
+        self.prev_state = None
+        self.needs_tick = True
+        self.led_state = {}
+        self.led_state["inactive"] = led_state_inactive or LedState("black", "dim")
+        self.led_state["active"] = led_state_active or LedState("black", "bright")
+        self.note_action = note_action
 
     def tick(self, tick_no):
         # If the state has not change, there is no need to update
-        if self.prev_state == self.state:
+        if not self.needs_tick and self.prev_state == self.state:
             return
 
-        # TODO: Handle state update
+        if self.state == ButtonState.INACTIVE:
+            self.device_port.send(mido.Message("control_change", control=self.note,
+                                               value=self.led_state["inactive"].color_value()))
+            if self.note_action:
+                if isinstance(self.note_action, int):
+                    self.relay_port.send(mido.Message("control_change", control=self.note_action, value=0))
+                elif isinstance(self.note_action, list) or isinstance(self.note_action, tuple):
+                    for note in self.note_action:
+                        self.relay_port.send(mido.Message("control_change", control=note, value=0))
+            else:
+                self.relay_port.send(mido.Message("control_change", control=self.note, value=0))
+        if self.state == ButtonState.ACTIVE:
+            self.device_port.send(mido.Message("control_change", control=self.note,
+                                               value=self.led_state["active"].color_value()))
+            if self.note_action:
+                if isinstance(self.note_action, int):
+                    self.relay_port.send(mido.Message("control_change", control=self.note_action, value=127))
+                elif isinstance(self.note_action, list) or isinstance(self.note_action, tuple):
+                    for note in self.note_action:
+                        self.relay_port.send(mido.Message("control_change", control=note, value=127))
 
+        self.needs_tick = False
         self.prev_state = self.state
+
+    def update(self, message):
+        self.needs_tick = True
+
+        if message.value == 0:
+            self.state = ButtonState.INACTIVE
+        elif message.value == 127:
+            self.state = ButtonState.ACTIVE
 
 
 class Button(Tickable):
@@ -180,18 +224,12 @@ class Button(Tickable):
         self.device_port = device_port
         self.relay_port = relay_port
         self.note = note
+        self.state = ButtonState.INACTIVE
         self.prev_state = None
         self.needs_tick = True  # indicates that properties have changed, requiring a redraw
-        self.state = ButtonState.INACTIVE
         self.led_state = {}
-        if not led_state_inactive:
-            self.led_state["inactive"] = LedState("black", "dim")
-        else:
-            self.led_state["inactive"] = led_state_inactive
-        if not led_state_active:
-            self.led_state["active"] = LedState("black", "bright")
-        else:
-            self.led_state["active"] = led_state_active
+        self.led_state["inactive"] = led_state_inactive or LedState("black", "dim")
+        self.led_state["active"] = led_state_active or LedState("black", "bright")
         self.note_action = note_action
 
     def tick(self, tick_no):
@@ -223,11 +261,8 @@ class Button(Tickable):
         self.needs_tick = False
         self.prev_state = self.state
 
-    def update(self, message=None):
+    def update(self, message):
         self.needs_tick = True
-
-        if not message:
-            return
 
         if message.velocity == 0:
             self.state = ButtonState.INACTIVE
@@ -254,33 +289,41 @@ class MaschineJam(Tickable):
                      for i in range(64)}
         self.touch_strips = {i + 48: TouchStrip(device_port=self.port_out, relay_port=self.relay_port, note=48 + i)
                              for i in range(8)}
-        # self.special_buttons = [CCButton(device_port=self.port_out, relay_port=self.relay_port, note=91),
-        #                         CCButton(device_port=self.port_out, relay_port=self.relay_port, note=92)]
+        self.special_buttons = {i: CCButton(device_port=self.port_out, relay_port=self.relay_port, note=i)
+                                for i in range(8)}
 
     def process_message(self, message):
-        # print(message.__dict__)
         if message.type == "note_on":
             if 0 <= message.note <= 64:
                 self.grid[message.note].update(message)
-            # else:
-            #     self.special_buttons[message.note].update(message)
         elif message.type == "control_change":
-            if 48 <= message.control <= 111:
+            if 0 <= message.control <= 7:
+                self.special_buttons[message.control].update(message)
+            elif 48 <= message.control <= 111:
                 self.touch_strips[message.control].update(message)
-                pass
 
     def tick(self, tick_no):
         if self.timeline:
             data = self.timeline.get(tick_no)
             if data:
                 for note, spec in data.items():
-                    # note = int(note)
-                    self.grid[note].led_state["active"] = spec["led_state"]["active"]
-                    self.grid[note].led_state["inactive"] = spec["led_state"]["inactive"]
-                    self.grid[note].note_action = spec["note_action"]
-                    self.grid[note].needs_tick = True
+                    if isinstance(note, int):
+                        self.grid[note].led_state["active"] = spec["led_state"]["active"]
+                        self.grid[note].led_state["inactive"] = spec["led_state"]["inactive"]
+                        self.grid[note].note_action = spec["note_action"]
+                        self.grid[note].needs_tick = True
+                    elif note.startswith("cc"):
+                        print(note)
+                        self.special_buttons[int(note.lstrip("cc"))].led_state["active"] = spec["led_state"]["active"]
+                        self.special_buttons[int(note.lstrip("cc"))].led_state[
+                            "inactive"] = spec["led_state"]["inactive"]
+                        self.special_buttons[int(note.lstrip("cc"))].note_action = spec["note_action"]
+                        self.special_buttons[int(note.lstrip("cc"))].needs_tick = True
 
         for button in self.grid.values():
+            button.tick(tick_no)
+
+        for button in self.special_buttons.values():
             button.tick(tick_no)
 
         for strip in self.touch_strips.values():
@@ -336,7 +379,10 @@ class Timeline:
             self.data[tick_index] = defaultdict_rec()
 
             for note, note_spec in time_spec.items():
-                note = int(note)
+                try:
+                    note = int(note)
+                except:
+                    pass
 
                 # Note Action
                 note_action_spec = note_spec.get("note", None)
