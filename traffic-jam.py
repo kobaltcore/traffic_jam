@@ -337,19 +337,33 @@ class MaschineJam(Tickable):
                                 for i in range(16)}
 
         # Play button
-        def adjust_clock(state):
+        def start_stop_clock(state):
             if state == ButtonState.ACTIVE:
                 CLOCK.toggle_lock()
                 print("{} clock".format("stopped" if CLOCK.locked else "started"))
-        self.special_buttons[8].callback = adjust_clock
+        self.special_buttons[8].callback = start_stop_clock
 
         # Record button
-        def adjust_clock(state):
+        def reset_clock(state):
             if state == ButtonState.ACTIVE:
                 print("reset clock")
                 CLOCK.lock()
                 CLOCK.tick_no = 0
-        self.special_buttons[9].callback = adjust_clock
+        self.special_buttons[9].callback = reset_clock
+
+        # Back button
+        def rewind_clock(state):
+            if state == ButtonState.ACTIVE:
+                print("rewinding clock")
+                CLOCK.tick_no = max(CLOCK.tick_no - 5, 0)
+        self.special_buttons[10].callback = rewind_clock
+
+        # Forward button
+        def forward_clock(state):
+            if state == ButtonState.ACTIVE:
+                print("forwarding clock")
+                CLOCK.tick_no += 5
+        self.special_buttons[11].callback = forward_clock
 
     def process_message(self, message):
         if message.type == "note_on":
@@ -377,7 +391,7 @@ class MaschineJam(Tickable):
                             self.grid[note].reset()
                         elif note.startswith("cc"):
                             cc_note = int(note.lstrip("cc"))
-                            self.grid[cc_note].reset()
+                            self.special_buttons[cc_note].reset()
 
                 self.data_cache = data
 
@@ -472,14 +486,12 @@ class Timeline:
                     led_state_active = LedState(color="orange", state="bright")
                     led_state_inactive = LedState(color="orange", state="dim")
                 else:
-                    led_spec_active = led_spec.get("active", None)
-                    led_spec_inactive = led_spec.get("inactive", None)
-                    if led_spec_active:
-                        led_state_active = LedState(color=led_spec_active.get("color", "orange"),
-                                                    state=led_spec_active.get("state", "bright"))
-                    if led_spec_inactive:
-                        led_state_inactive = LedState(color=led_spec_inactive.get("color", "orange"),
-                                                      state=led_spec_inactive.get("state", "dim"))
+                    led_spec_active = led_spec.get("active", {})
+                    led_spec_inactive = led_spec.get("inactive", {})
+                    led_state_active = LedState(color=led_spec_active.get("color", "orange"),
+                                                state=led_spec_active.get("state", "bright"))
+                    led_state_inactive = LedState(color=led_spec_inactive.get("color", "orange"),
+                                                  state=led_spec_inactive.get("state", "dim"))
 
                 self.data[tick_index][note]["led_state"]["active"] = led_state_active
                 self.data[tick_index][note]["led_state"]["inactive"] = led_state_inactive
