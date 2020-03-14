@@ -250,7 +250,7 @@ class Button(Tickable):
 
     def __init__(self, device_port, relay_port, note,
                  led_state_inactive=None, led_state_active=None,
-                 note_action=None):
+                 note_action=None, channel=0):
         self.device_port = device_port
         self.relay_port = relay_port
         self.note = note
@@ -261,6 +261,7 @@ class Button(Tickable):
         self.led_state["inactive"] = led_state_inactive or LedState("black", "dim")
         self.led_state["active"] = led_state_active or LedState("black", "bright")
         self.note_action = note_action
+        self.channel = channel
 
     def reset(self):
         self.state = ButtonState.INACTIVE
@@ -280,19 +281,23 @@ class Button(Tickable):
                                                velocity=self.led_state["inactive"].color_value()))
             if self.note_action:
                 if isinstance(self.note_action, int):
-                    self.relay_port.send(mido.Message("note_on", note=self.note_action, velocity=0))
+                    self.relay_port.send(mido.Message("note_on", channel=self.channel,
+                                                      note=self.note_action, velocity=0))
                 elif isinstance(self.note_action, list) or isinstance(self.note_action, tuple):
                     for note in self.note_action:
-                        self.relay_port.send(mido.Message("note_on", note=note, velocity=0))
+                        self.relay_port.send(mido.Message("note_on", channel=self.channel,
+                                                          note=note, velocity=0))
         if self.state == ButtonState.ACTIVE:
             self.device_port.send(mido.Message("note_on", note=self.note,
                                                velocity=self.led_state["active"].color_value()))
             if self.note_action:
                 if isinstance(self.note_action, int):
-                    self.relay_port.send(mido.Message("note_on", note=self.note_action, velocity=127))
+                    self.relay_port.send(mido.Message("note_on", channel=self.channel,
+                                                      note=self.note_action, velocity=127))
                 elif isinstance(self.note_action, list) or isinstance(self.note_action, tuple):
                     for note in self.note_action:
-                        self.relay_port.send(mido.Message("note_on", note=note, velocity=127))
+                        self.relay_port.send(mido.Message("note_on", channel=self.channel,
+                                                          note=note, velocity=127))
 
         self.needs_tick = False
         self.prev_state = self.state
@@ -400,12 +405,12 @@ class MaschineJam(Tickable):
                         self.grid[note].led_state["active"] = spec["led_state"]["active"]
                         self.grid[note].led_state["inactive"] = spec["led_state"]["inactive"]
                         self.grid[note].note_action = spec["note_action"]
+                        self.grid[note].channel = spec["channel"]
                         self.grid[note].needs_tick = True
                     elif note.startswith("cc"):
                         cc_note = int(note.lstrip("cc"))
                         self.special_buttons[cc_note].led_state["active"] = spec["led_state"]["active"]
-                        self.special_buttons[cc_note].led_state[
-                            "inactive"] = spec["led_state"]["inactive"]
+                        self.special_buttons[cc_note].led_state["inactive"] = spec["led_state"]["inactive"]
                         self.special_buttons[cc_note].note_action = spec["note_action"]
                         self.special_buttons[cc_note].needs_tick = True
 
@@ -470,6 +475,8 @@ class Timeline:
                     note = int(note)
                 except:
                     pass
+
+                self.data[tick_index][note]["channel"] = note_spec.get("channel", 0)
 
                 # Note Action
                 note_action_spec = note_spec.get("note", None)
