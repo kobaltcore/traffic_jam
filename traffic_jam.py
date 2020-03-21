@@ -32,6 +32,7 @@ class Clock:
         self.registered_cues = []
         self.cpu = CPU()
         self.locked = locked
+        self.warping = False
 
     def seconds_to_ticks(self, seconds):
         return seconds / self.tick_length
@@ -47,6 +48,19 @@ class Clock:
             self.registered_cues.append((when, func, args))
         else:
             self.registered_cues.append((self.tick_no + when, func, args))
+
+    def warp(self, step, reverse=False):
+        self.warping = True
+        for i in range(step):
+            self.tick()
+            if reverse:
+                self.tick_no -= 1
+                if self.tick_no < 0:
+                    self.tick_no = 0
+                    break
+            else:
+                self.tick_no += 1
+        self.warping = False
 
     def tick(self):
         """Ticks the state of the application."""
@@ -182,7 +196,7 @@ class CCButton(Tickable):
 
     def __init__(self, device_port, relay_port, note,
                  led_state_inactive=None, led_state_active=None,
-                 note_action=None, callback=None):
+                 note_output=None, action=None):
         self.device_port = device_port
         self.relay_port = relay_port
         self.note = note
@@ -192,8 +206,8 @@ class CCButton(Tickable):
         self.led_state = {}
         self.led_state["inactive"] = led_state_inactive or LedState("black", "dim")
         self.led_state["active"] = led_state_active or LedState("black", "bright")
-        self.note_action = note_action
-        self.callback = callback
+        self.note_output = note_output
+        self.action = action
 
     def reset(self):
         self.state = ButtonState.INACTIVE
@@ -201,35 +215,36 @@ class CCButton(Tickable):
         self.needs_tick = True
         self.led_state["inactive"] = LedState("black", "dim")
         self.led_state["active"] = LedState("black", "bright")
-        self.note_action = None
+        self.note_output = None
+        self.action = None
 
     def tick(self, tick_no):
         # If the state has not change, there is no need to update
         if not self.needs_tick and self.prev_state == self.state:
             return
 
-        if self.callback:
-            self.callback(self.state)
+        if self.action:
+            self.state = self.action(self.state)
 
         if self.state == ButtonState.INACTIVE:
             self.device_port.send(mido.Message("control_change", control=self.note,
                                                value=self.led_state["inactive"].color_value()))
-            if self.note_action:
-                if isinstance(self.note_action, int):
-                    self.relay_port.send(mido.Message("control_change", control=self.note_action, value=0))
-                elif isinstance(self.note_action, list) or isinstance(self.note_action, tuple):
-                    for note in self.note_action:
+            if self.note_output:
+                if isinstance(self.note_output, int):
+                    self.relay_port.send(mido.Message("control_change", control=self.note_output, value=0))
+                elif isinstance(self.note_output, tuple) or isinstance(self.note_output, list):
+                    for note in self.note_output:
                         self.relay_port.send(mido.Message("control_change", control=note, value=0))
             else:
                 self.relay_port.send(mido.Message("control_change", control=self.note, value=0))
-        if self.state == ButtonState.ACTIVE:
+        elif self.state == ButtonState.ACTIVE:
             self.device_port.send(mido.Message("control_change", control=self.note,
                                                value=self.led_state["active"].color_value()))
-            if self.note_action:
-                if isinstance(self.note_action, int):
-                    self.relay_port.send(mido.Message("control_change", control=self.note_action, value=127))
-                elif isinstance(self.note_action, list) or isinstance(self.note_action, tuple):
-                    for note in self.note_action:
+            if self.note_output:
+                if isinstance(self.note_output, int):
+                    self.relay_port.send(mido.Message("control_change", control=self.note_output, value=127))
+                elif isinstance(self.note_output, tuple) or isinstance(self.note_output, list):
+                    for note in self.note_output:
                         self.relay_port.send(mido.Message("control_change", control=note, value=127))
             else:
                 self.relay_port.send(mido.Message("control_change", control=self.note, value=127))
@@ -250,7 +265,7 @@ class Button(Tickable):
 
     def __init__(self, device_port, relay_port, note,
                  led_state_inactive=None, led_state_active=None,
-                 note_action=None, channel=0):
+                 note_output=None, action=None, channel=0):
         self.device_port = device_port
         self.relay_port = relay_port
         self.note = note
@@ -260,7 +275,8 @@ class Button(Tickable):
         self.led_state = {}
         self.led_state["inactive"] = led_state_inactive or LedState("black", "dim")
         self.led_state["active"] = led_state_active or LedState("black", "bright")
-        self.note_action = note_action
+        self.note_output = note_output
+        self.action = action
         self.channel = channel
 
     def reset(self):
@@ -269,33 +285,37 @@ class Button(Tickable):
         self.needs_tick = True
         self.led_state["inactive"] = LedState("black", "dim")
         self.led_state["active"] = LedState("black", "bright")
-        self.note_action = None
+        self.note_output = None
+        self.action = None
 
     def tick(self, tick_no):
         # If the state has not change, there is no need to update
         if not self.needs_tick and self.prev_state == self.state:
             return
 
+        if self.action:
+            self.action(self.state)
+
         if self.state == ButtonState.INACTIVE:
             self.device_port.send(mido.Message("note_on", note=self.note,
                                                velocity=self.led_state["inactive"].color_value()))
-            if self.note_action:
-                if isinstance(self.note_action, int):
+            if self.note_output:
+                if isinstance(self.note_output, int):
                     self.relay_port.send(mido.Message("note_on", channel=self.channel,
-                                                      note=self.note_action, velocity=0))
-                elif isinstance(self.note_action, list) or isinstance(self.note_action, tuple):
-                    for note in self.note_action:
+                                                      note=self.note_output, velocity=0))
+                elif isinstance(self.note_output, tuple) or isinstance(self.note_output, list):
+                    for note in self.note_output:
                         self.relay_port.send(mido.Message("note_on", channel=self.channel,
                                                           note=note, velocity=0))
-        if self.state == ButtonState.ACTIVE:
+        elif self.state == ButtonState.ACTIVE:
             self.device_port.send(mido.Message("note_on", note=self.note,
                                                velocity=self.led_state["active"].color_value()))
-            if self.note_action:
-                if isinstance(self.note_action, int):
+            if self.note_output:
+                if isinstance(self.note_output, int):
                     self.relay_port.send(mido.Message("note_on", channel=self.channel,
-                                                      note=self.note_action, velocity=127))
-                elif isinstance(self.note_action, list) or isinstance(self.note_action, tuple):
-                    for note in self.note_action:
+                                                      note=self.note_output, velocity=127))
+                elif isinstance(self.note_output, tuple) or isinstance(self.note_output, list):
+                    for note in self.note_output:
                         self.relay_port.send(mido.Message("note_on", channel=self.channel,
                                                           note=note, velocity=127))
 
@@ -341,34 +361,13 @@ class MaschineJam(Tickable):
         self.special_buttons = {i: CCButton(device_port=self.port_out, relay_port=self.relay_port, note=i)
                                 for i in range(16)}
 
-        # Play button
-        def start_stop_clock(state):
-            if state == ButtonState.ACTIVE:
-                CLOCK.toggle_lock()
-                print("{} clock".format("stopped" if CLOCK.locked else "started"))
-        self.special_buttons[8].callback = start_stop_clock
+        self.grid[63].led_state["active"] = LedState("mint", "bright")
+        self.grid[63].led_state["inactive"] = LedState("mint", "dim")
 
-        # Record button
-        def reset_clock(state):
-            if state == ButtonState.ACTIVE:
-                print("reset clock")
-                CLOCK.lock()
-                CLOCK.tick_no = 0
-        self.special_buttons[9].callback = reset_clock
-
-        # Back button
-        def rewind_clock(state):
-            if state == ButtonState.ACTIVE:
-                print("rewinding clock")
-                CLOCK.tick_no = max(CLOCK.tick_no - 5, 0)
-        self.special_buttons[10].callback = rewind_clock
-
-        # Forward button
-        def forward_clock(state):
-            if state == ButtonState.ACTIVE:
-                print("forwarding clock")
-                CLOCK.tick_no += 5
-        self.special_buttons[11].callback = forward_clock
+        self.special_buttons[8].action = ClockToggleAction()
+        self.special_buttons[9].action = ClockResetAction()
+        self.special_buttons[10].action = ClockRewindAction(50)
+        self.special_buttons[11].action = ClockForwardAction(50)
 
     def process_message(self, message):
         if message.type == "note_on":
@@ -391,7 +390,9 @@ class MaschineJam(Tickable):
             if data:
                 if self.data_cache and not self.data_cache == data:
                     # Reset buttons from the previous time slice
-                    for note in self.data_cache.keys():
+                    for note, note_spec in self.data_cache.items():
+                        if note_spec["sticky"]:
+                            continue
                         if isinstance(note, int):
                             self.grid[note].reset()
                         elif note.startswith("cc"):
@@ -404,15 +405,26 @@ class MaschineJam(Tickable):
                     if isinstance(note, int):
                         self.grid[note].led_state["active"] = spec["led_state"]["active"]
                         self.grid[note].led_state["inactive"] = spec["led_state"]["inactive"]
-                        self.grid[note].note_action = spec["note_action"]
+                        self.grid[note].note_output = spec["note_output"]
+                        self.grid[note].action = spec["action"]
                         self.grid[note].channel = spec["channel"]
                         self.grid[note].needs_tick = True
                     elif note.startswith("cc"):
                         cc_note = int(note.lstrip("cc"))
                         self.special_buttons[cc_note].led_state["active"] = spec["led_state"]["active"]
                         self.special_buttons[cc_note].led_state["inactive"] = spec["led_state"]["inactive"]
-                        self.special_buttons[cc_note].note_action = spec["note_action"]
+                        self.special_buttons[cc_note].note_output = spec["note_output"]
+                        self.special_buttons[cc_note].action = spec["action"]
                         self.special_buttons[cc_note].needs_tick = True
+
+        if not CLOCK.locked:
+            if (tick_no // CLOCK.ppq) % 2 == 0:
+                if self.grid[63].state == ButtonState.INACTIVE:
+                    self.grid[63].state = ButtonState.ACTIVE
+                    self.grid[63].needs_tick = True
+            elif self.grid[63].state == ButtonState.ACTIVE:
+                self.grid[63].state = ButtonState.INACTIVE
+                self.grid[63].needs_tick = True
 
         for button in self.grid.values():
             button.tick(tick_no)
@@ -454,6 +466,71 @@ class NoteDB:
         del self.data[key]
 
 
+class NoteAction(ABC):
+
+    @abstractmethod
+    def execute(self, state):
+        pass
+
+    def __call__(self, state):
+        return self.execute(state) or state
+
+
+class PrintAction(NoteAction):
+
+    def __init__(self, message):
+        self.message = message
+
+    def execute(self, state):
+        if state == ButtonState.ACTIVE:
+            print(self.message)
+
+
+class ClockToggleAction(NoteAction):
+
+    def execute(self, state):
+        if state == ButtonState.ACTIVE:
+            CLOCK.toggle_lock()
+            print("{} clock".format(colored("Paused", "yellow") if CLOCK.locked else colored("Started", "green")))
+
+
+class ClockResetAction(NoteAction):
+
+    def execute(self, state):
+        if state == ButtonState.ACTIVE:
+            print("{} clock".format(colored("Reset", "red")))
+            CLOCK.lock()
+            CLOCK.tick_no = 0
+
+
+class ClockForwardAction(NoteAction):
+
+    def __init__(self, step):
+        if isinstance(step, float):
+            self.step = max(int(CLOCK.ppq * step), 1)
+        else:
+            self.step = max(step, 1)
+
+    def execute(self, state):
+        if state == ButtonState.ACTIVE and not CLOCK.warping:
+            CLOCK.warp(self.step)
+            print(f"Warped forward by {self.step} ticks")
+
+
+class ClockRewindAction(NoteAction):
+
+    def __init__(self, step):
+        if isinstance(step, float):
+            self.step = max(int(CLOCK.ppq * step), 1)
+        else:
+            self.step = max(step, 1)
+
+    def execute(self, state):
+        if state == ButtonState.ACTIVE and not CLOCK.warping:
+            CLOCK.warp(self.step, reverse=True)
+            print(f"Warped backward by {self.step} ticks")
+
+
 class Timeline:
 
     def __init__(self, filename):
@@ -478,13 +555,24 @@ class Timeline:
 
                 self.data[tick_index][note]["channel"] = note_spec.get("channel", 0)
 
-                # Note Action
-                note_action_spec = note_spec.get("note", None)
-                if not note_action_spec:
-                    self.data[tick_index][note]["note_action"] = note
+                self.data[tick_index][note]["sticky"] = note_spec.get("sticky", False)
+
+                action_spec = note_spec.get("action", None)
+                if not action_spec:
+                    self.data[tick_index][note]["action"] = None
                 else:
-                    note_action = NOTE_DB.get(note_action_spec, note_action_spec)
-                    self.data[tick_index][note]["note_action"] = note_action
+                    tokens = action_spec.split(" ")
+                    if tokens[0] == "print":
+                        self.data[tick_index][note]["action"] = PrintAction(" ".join(tokens[1:]))
+
+                # Note Action
+                note_output_spec = note_spec.get("note", None)
+                if not note_output_spec:
+                    self.data[tick_index][note]["note_output"] = note
+                else:
+                    # TODO: handle emitting multiple notes at once
+                    note_output = NOTE_DB.get(note_output_spec, note_output_spec)
+                    self.data[tick_index][note]["note_output"] = note_output
 
                 # LED State
                 led_spec = note_spec.get("led", None)
