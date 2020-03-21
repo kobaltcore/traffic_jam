@@ -294,7 +294,7 @@ class Button(Tickable):
             return
 
         if self.action:
-            self.action(self.state)
+            self.state = self.action(self.state)
 
         if self.state == ButtonState.INACTIVE:
             self.device_port.send(mido.Message("note_on", note=self.note,
@@ -573,7 +573,7 @@ class Timeline:
                 if not action_spec:
                     self.data[tick_index][note]["action"] = None
                 else:
-                    tokens = action_spec.split(" ")
+                    tokens = action_spec.split()
                     if tokens[0] == "print":
                         self.data[tick_index][note]["action"] = PrintAction(" ".join(tokens[1:]))
 
@@ -582,8 +582,13 @@ class Timeline:
                 if not note_output_spec:
                     self.data[tick_index][note]["note_output"] = note
                 else:
-                    # TODO: handle emitting multiple notes at once
-                    note_output = NOTE_DB.get(note_output_spec, note_output_spec)
+                    if isinstance(note_output_spec, str):
+                        note_output = []
+                        for _note in note_output_spec.split():
+                            note_output.append(NOTE_DB.get(_note))
+                        note_output = tuple(note_output)
+                    else:
+                        note_output = note
                     self.data[tick_index][note]["note_output"] = note_output
 
                 # LED State
