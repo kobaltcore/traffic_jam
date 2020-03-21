@@ -19,6 +19,245 @@ def defaultdict_rec():
     return defaultdict(defaultdict_rec)
 
 
+### State Keeping ###
+
+class LedState:
+
+    def __init__(self, color, state):
+        self.color = color
+        self.state = state
+
+    def color_value(self):
+        return PALETTE[self.color][self.state]
+
+    def __repr__(self):
+        return f"LedState(color={self.color}, state={self.state})"
+
+
+class ButtonState(IntEnum):
+    INACTIVE = 0
+    ACTIVE = 1
+
+
+### Abstract Base Classes ###
+
+class Tickable(ABC):
+
+    @abstractmethod
+    def tick(self, tick_no):
+        pass
+
+
+class NoteAction(ABC):
+
+    @abstractmethod
+    def execute(self, state):
+        pass
+
+    def __call__(self, state):
+        return self.execute(state) or state
+
+
+### Utility Classes ###
+
+class Palette:
+
+    def __init__(self, filename):
+        self.data = defaultdict(dict)
+
+        with open(filename, "r") as f:
+            palette_data = yaml.full_load(f)
+
+        for color_name, start in palette_data["colors"].items():
+            for state_name, index in palette_data["states"].items():
+                self.data[color_name][state_name] = start + index
+
+    def get(self, key, default):
+        return self.data.get(key, default)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __setitem__(self, key, item):
+        self.data[key] = item
+
+    def __getitem__(self, key):
+        return self.data[key]
+
+    def __delitem__(self, key):
+        del self.data[key]
+
+
+class NoteDB:
+
+    def __init__(self, filename):
+        with open(filename, "r") as f:
+            notes_data = yaml.full_load(f)
+
+        self.data = {}
+        for i, step in enumerate(range(0, 132, 12)):
+            for note, num in notes_data.items():
+                if step + num >= 127:
+                    break
+                self.data[f"{note.upper()}{i - 1}"] = step + num
+                self.data[f"{note.lower()}{i - 1}"] = step + num
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __setitem__(self, key, item):
+        self.data[key] = item
+
+    def __getitem__(self, key):
+        return self.data[key]
+
+    def __delitem__(self, key):
+        del self.data[key]
+
+
+class Timeline:
+
+    def __init__(self, filename):
+        with open(filename, "r") as f:
+            timeline_data = yaml.full_load(f)
+
+        self.data = dict()
+        for index, time_spec in timeline_data.items():
+            try:
+                # if bare int treat as tick value
+                tick_index = int(index)
+            except:
+                # otherwise treat as natural language duration
+                tick_index = CLOCK.seconds_to_ticks(Duration(index).to_seconds())
+            self.data[tick_index] = defaultdict_rec()
+
+            for note, note_spec in time_spec.items():
+                try:
+                    note = int(note)
+                except:
+                    pass
+
+                self.data[tick_index][note]["channel"] = note_spec.get("channel", 0)
+
+                self.data[tick_index][note]["sticky"] = note_spec.get("sticky", False)
+
+                action_spec = note_spec.get("action", None)
+                if not action_spec:
+                    self.data[tick_index][note]["action"] = None
+                else:
+                    tokens = action_spec.split()
+                    if tokens[0] == "print":
+                        self.data[tick_index][note]["action"] = PrintAction(" ".join(tokens[1:]))
+
+                # Note Action
+                note_output_spec = note_spec.get("note", None)
+                if not note_output_spec:
+                    self.data[tick_index][note]["note_output"] = note
+                else:
+                    if isinstance(note_output_spec, str):
+                        note_output = []
+                        for _note in note_output_spec.split():
+                            note_output.append(NOTE_DB.get(_note))
+                        note_output = tuple(note_output)
+                    else:
+                        note_output = note
+                    self.data[tick_index][note]["note_output"] = note_output
+
+                # LED State
+                led_spec = note_spec.get("led", None)
+
+                if not led_spec:
+                    led_state_active = LedState(color="orange", state="bright")
+                    led_state_inactive = LedState(color="orange", state="dim")
+                else:
+                    led_spec_active = led_spec.get("active", {})
+                    led_spec_inactive = led_spec.get("inactive", {})
+                    led_state_active = LedState(color=led_spec_active.get("color", "orange"),
+                                                state=led_spec_active.get("state", "bright"))
+                    led_state_inactive = LedState(color=led_spec_inactive.get("color", "orange"),
+                                                  state=led_spec_inactive.get("state", "dim"))
+
+                self.data[tick_index][note]["led_state"]["active"] = led_state_active
+                self.data[tick_index][note]["led_state"]["inactive"] = led_state_inactive
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __setitem__(self, key, item):
+        self.data[key] = item
+
+    def __getitem__(self, key):
+        return self.data[key]
+
+    def __delitem__(self, key):
+        del self.data[key]
+
+
+### Action Classes ###
+
+class PrintAction(NoteAction):
+
+    def __init__(self, message):
+        self.message = message
+
+    def execute(self, state):
+        if state == ButtonState.ACTIVE:
+            print(self.message)
+
+
+class ClockToggleAction(NoteAction):
+
+    def execute(self, state):
+        if state == ButtonState.ACTIVE:
+            CLOCK.toggle_lock()
+            print("{} clock".format(colored("Paused", "yellow") if CLOCK.locked else colored("Started", "green")))
+
+
+class ClockResetAction(NoteAction):
+
+    def execute(self, state):
+        if state == ButtonState.ACTIVE:
+            print("{} clock".format(colored("Reset", "red")))
+            CLOCK.lock()
+            CLOCK.tick_no = 0
+
+
+class ClockForwardAction(NoteAction):
+
+    def __init__(self, step):
+        if isinstance(step, float):
+            self.step = max(int(CLOCK.ppq * step), 1)
+        else:
+            self.step = max(step, 1)
+
+    def execute(self, state):
+        if state == ButtonState.ACTIVE and not CLOCK.warping:
+            CLOCK.warp(self.step)
+            print(f"Warped forward by {self.step} ticks")
+
+
+class ClockRewindAction(NoteAction):
+
+    def __init__(self, step):
+        if isinstance(step, float):
+            self.step = max(int(CLOCK.ppq * step), 1)
+        else:
+            self.step = max(step, 1)
+
+    def execute(self, state):
+        if state == ButtonState.ACTIVE and not CLOCK.warping:
+            CLOCK.warp(self.step, reverse=True)
+            print(f"Warped backward by {self.step} ticks")
+
+
+### Tickable Classes ###
+
 class Clock:
 
     def __init__(self, bpm=120, ppq=24, locked=False):
@@ -115,13 +354,6 @@ class Clock:
         time.sleep(self.poll())
 
 
-class Tickable(ABC):
-
-    @abstractmethod
-    def tick(self, tick_no):
-        pass
-
-
 class CPU(Tickable):
 
     def __init__(self, report_interval=10):
@@ -140,24 +372,6 @@ class CPU(Tickable):
             self.last_shown = new_time
         self.last_usage = new_usage
         self.last_time = new_time
-
-
-class LedState:
-
-    def __init__(self, color, state):
-        self.color = color
-        self.state = state
-
-    def color_value(self):
-        return PALETTE[self.color][self.state]
-
-    def __repr__(self):
-        return f"LedState(color={self.color}, state={self.state})"
-
-
-class ButtonState(IntEnum):
-    INACTIVE = 0
-    ACTIVE = 1
 
 
 class TouchStrip(Tickable):
@@ -448,210 +662,6 @@ class MaschineJam(Tickable):
             strip.tick(tick_no)
 
 
-class NoteDB:
-
-    def __init__(self, filename):
-        with open(filename, "r") as f:
-            notes_data = yaml.full_load(f)
-
-        self.data = {}
-        for i, step in enumerate(range(0, 132, 12)):
-            for note, num in notes_data.items():
-                if step + num >= 127:
-                    break
-                self.data[f"{note.upper()}{i - 1}"] = step + num
-                self.data[f"{note.lower()}{i - 1}"] = step + num
-
-    def get(self, key, default=None):
-        return self.data.get(key, default)
-
-    def __len__(self):
-        return len(self.data)
-
-    def __setitem__(self, key, item):
-        self.data[key] = item
-
-    def __getitem__(self, key):
-        return self.data[key]
-
-    def __delitem__(self, key):
-        del self.data[key]
-
-
-class NoteAction(ABC):
-
-    @abstractmethod
-    def execute(self, state):
-        pass
-
-    def __call__(self, state):
-        return self.execute(state) or state
-
-
-class PrintAction(NoteAction):
-
-    def __init__(self, message):
-        self.message = message
-
-    def execute(self, state):
-        if state == ButtonState.ACTIVE:
-            print(self.message)
-
-
-class ClockToggleAction(NoteAction):
-
-    def execute(self, state):
-        if state == ButtonState.ACTIVE:
-            CLOCK.toggle_lock()
-            print("{} clock".format(colored("Paused", "yellow") if CLOCK.locked else colored("Started", "green")))
-
-
-class ClockResetAction(NoteAction):
-
-    def execute(self, state):
-        if state == ButtonState.ACTIVE:
-            print("{} clock".format(colored("Reset", "red")))
-            CLOCK.lock()
-            CLOCK.tick_no = 0
-
-
-class ClockForwardAction(NoteAction):
-
-    def __init__(self, step):
-        if isinstance(step, float):
-            self.step = max(int(CLOCK.ppq * step), 1)
-        else:
-            self.step = max(step, 1)
-
-    def execute(self, state):
-        if state == ButtonState.ACTIVE and not CLOCK.warping:
-            CLOCK.warp(self.step)
-            print(f"Warped forward by {self.step} ticks")
-
-
-class ClockRewindAction(NoteAction):
-
-    def __init__(self, step):
-        if isinstance(step, float):
-            self.step = max(int(CLOCK.ppq * step), 1)
-        else:
-            self.step = max(step, 1)
-
-    def execute(self, state):
-        if state == ButtonState.ACTIVE and not CLOCK.warping:
-            CLOCK.warp(self.step, reverse=True)
-            print(f"Warped backward by {self.step} ticks")
-
-
-class Timeline:
-
-    def __init__(self, filename):
-        with open(filename, "r") as f:
-            timeline_data = yaml.full_load(f)
-
-        self.data = dict()
-        for index, time_spec in timeline_data.items():
-            try:
-                # if bare int treat as tick value
-                tick_index = int(index)
-            except:
-                # otherwise treat as natural language duration
-                tick_index = CLOCK.seconds_to_ticks(Duration(index).to_seconds())
-            self.data[tick_index] = defaultdict_rec()
-
-            for note, note_spec in time_spec.items():
-                try:
-                    note = int(note)
-                except:
-                    pass
-
-                self.data[tick_index][note]["channel"] = note_spec.get("channel", 0)
-
-                self.data[tick_index][note]["sticky"] = note_spec.get("sticky", False)
-
-                action_spec = note_spec.get("action", None)
-                if not action_spec:
-                    self.data[tick_index][note]["action"] = None
-                else:
-                    tokens = action_spec.split()
-                    if tokens[0] == "print":
-                        self.data[tick_index][note]["action"] = PrintAction(" ".join(tokens[1:]))
-
-                # Note Action
-                note_output_spec = note_spec.get("note", None)
-                if not note_output_spec:
-                    self.data[tick_index][note]["note_output"] = note
-                else:
-                    if isinstance(note_output_spec, str):
-                        note_output = []
-                        for _note in note_output_spec.split():
-                            note_output.append(NOTE_DB.get(_note))
-                        note_output = tuple(note_output)
-                    else:
-                        note_output = note
-                    self.data[tick_index][note]["note_output"] = note_output
-
-                # LED State
-                led_spec = note_spec.get("led", None)
-
-                if not led_spec:
-                    led_state_active = LedState(color="orange", state="bright")
-                    led_state_inactive = LedState(color="orange", state="dim")
-                else:
-                    led_spec_active = led_spec.get("active", {})
-                    led_spec_inactive = led_spec.get("inactive", {})
-                    led_state_active = LedState(color=led_spec_active.get("color", "orange"),
-                                                state=led_spec_active.get("state", "bright"))
-                    led_state_inactive = LedState(color=led_spec_inactive.get("color", "orange"),
-                                                  state=led_spec_inactive.get("state", "dim"))
-
-                self.data[tick_index][note]["led_state"]["active"] = led_state_active
-                self.data[tick_index][note]["led_state"]["inactive"] = led_state_inactive
-
-    def get(self, key, default=None):
-        return self.data.get(key, default)
-
-    def __len__(self):
-        return len(self.data)
-
-    def __setitem__(self, key, item):
-        self.data[key] = item
-
-    def __getitem__(self, key):
-        return self.data[key]
-
-    def __delitem__(self, key):
-        del self.data[key]
-
-
-class Palette:
-
-    def __init__(self, filename):
-        self.data = defaultdict(dict)
-
-        with open(filename, "r") as f:
-            palette_data = yaml.full_load(f)
-
-        for color_name, start in palette_data["colors"].items():
-            for state_name, index in palette_data["states"].items():
-                self.data[color_name][state_name] = start + index
-
-    def get(self, key, default):
-        return self.data.get(key, default)
-
-    def __len__(self):
-        return len(self.data)
-
-    def __setitem__(self, key, item):
-        self.data[key] = item
-
-    def __getitem__(self, key):
-        return self.data[key]
-
-    def __delitem__(self, key):
-        del self.data[key]
-
-
 def main(args):
     global CLOCK, NOTE_DB, PALETTE
 
@@ -685,7 +695,7 @@ def main(args):
         while True:
             CLOCK.once()
     except KeyboardInterrupt:
-        print("\nAborted")
+        print("\nClosed")
         jam.reset_grid()
         CLOCK.tick()
         jam.shutdown()
