@@ -346,6 +346,18 @@ class MaschineJam(Tickable):
         self.reset_grid()
 
     def shutdown(self):
+        for button in self.grid.values():
+            button.reset()
+            button.tick(0)
+
+        for strip in self.touch_strips.values():
+            strip.reset()
+            strip.tick(0)
+
+        for button in self.special_buttons.values():
+            button.reset()
+            button.tick(0)
+
         self.port_out.close()
         self.port_in.close()
         self.relay_port.close()
@@ -540,7 +552,7 @@ class Timeline:
         self.data = dict()
         for index, time_spec in timeline_data.items():
             try:
-                # if bare int or int with suffix "t", treat as tick value
+                # if bare int treat as tick value
                 tick_index = int(index)
             except:
                 # otherwise treat as natural language duration
