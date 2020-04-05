@@ -163,7 +163,7 @@ class Timeline:
                             note_output.append(NOTE_DB.get(_note))
                         note_output = tuple(note_output)
                     else:
-                        note_output = note
+                        note_output = note_output_spec
                     self.data[tick_index][note]["note_output"] = note_output
 
                 # LED State
